@@ -26,7 +26,8 @@ func GetPosts(w http.ResponseWriter, q map[string][]string, b string, db *sql.DB
             http.Error(w, err.Error(), http.StatusInternalServerError)
         }
     }()
-    rows, err := db.Query(fmt.Sprintf("SELECT %s FROM Posts", models.PostSQLColumns))
+    query := "SELECT " + models.PostSQLColumns + " FROM Posts"
+    rows, err := db.Query(query)
     if err != nil {
         return
     }
@@ -57,13 +58,13 @@ func GetComments(w http.ResponseWriter, q map[string][]string, b string, db *sql
         http.Error(w, "Query parameter parentPost required", http.StatusBadRequest)
         return;
     } else if hasPComment {
-        query = "SELECT %s FROM Comments WHERE ParentComment=%s"
+        query = "SELECT " + models.CommentSQLColumns + " FROM Comments WHERE ParentComment=$1"
         parent = pComments[0]
     } else {
-        query = "SELECT %s FROM Comments WHERE ParentPost=%s"
+        query = "SELECT " + models.CommentSQLColumns + " FROM Comments WHERE ParentPost=$1"
         parent = pPosts[0]
     }
-    rows, err := db.Query(fmt.Sprintf(query, models.CommentSQLColumns, parent))
+    rows, err := db.Query(query, parent)
     if err != nil {
         return
     }
