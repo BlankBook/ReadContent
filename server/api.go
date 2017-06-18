@@ -12,14 +12,20 @@ import (
 
 // SetupAPI adds the API routes to the provided router
 func SetupAPI(r web.Router, db *sql.DB) {
-    r.HandleRoute([]string{web.GET}, "/posts", GetPosts, db)
-    r.HandleRoute([]string{web.GET}, "/comments", GetComments, db)
+    r.HandleRoute([]string{web.GET}, "/posts",
+                  []string{}, []string{},
+                  GetPosts, db)
+    r.HandleRoute([]string{web.GET}, "/comments",
+                  []string{"parentPost"}, []string{"parentComment"},
+                  GetComments, db)
     // Get /contributorid gets a unique ID that must be used for all 
     // contributions the user makes to this post
-    r.HandleRoute([]string{web.GET}, "/contributorid", GetContributorId, db)
+    r.HandleRoute([]string{web.GET}, "/contributorid",
+                  []string{"postId"}, []string{},
+                  GetContributorId, db)
 }
 
-func GetPosts(w http.ResponseWriter, q map[string][]string, b string, db *sql.DB) {
+func GetPosts(w http.ResponseWriter, q map[string]string, b string, db *sql.DB) {
     var err error
     defer func() {
         if err != nil {
@@ -43,26 +49,23 @@ func GetPosts(w http.ResponseWriter, q map[string][]string, b string, db *sql.DB
     w.Write(res)
 }
 
-func GetComments(w http.ResponseWriter, q map[string][]string, b string, db *sql.DB) {
+func GetComments(w http.ResponseWriter, q map[string]string, b string, db *sql.DB) {
     var err error
     defer func() {
         if err != nil {
             http.Error(w, err.Error(), http.StatusInternalServerError)
         }
     }()
-    pPosts, hasPPost := q["parentPost"]
-    pComments, hasPComment := q["parentComment"]
+    parentPost := q["parentPost"]
+    parentComment := q["parentComment"]
     var query string
     var parent string
-    if !hasPPost || len(pPosts) == 0 {
-        http.Error(w, "Query parameter parentPost required", http.StatusBadRequest)
-        return;
-    } else if hasPComment {
+    if parentComment != "" {
         query = "SELECT " + models.CommentSQLColumns + " FROM Comments WHERE ParentComment=$1"
-        parent = pComments[0]
+        parent = parentComment
     } else {
         query = "SELECT " + models.CommentSQLColumns + " FROM Comments WHERE ParentPost=$1"
-        parent = pPosts[0]
+        parent = parentPost
     }
     rows, err := db.Query(query, parent)
     if err != nil {
@@ -80,19 +83,14 @@ func GetComments(w http.ResponseWriter, q map[string][]string, b string, db *sql
     w.Write(res)
 }
 
-func GetContributorId(w http.ResponseWriter, q map[string][]string, b string, db *sql.DB) {
-    postIds, hasPostId := q["postId"]
-    if !hasPostId || len(postIds) == 0 {
-        http.Error(w, "Query parameter postId required", http.StatusBadRequest)
-        return
-    }
+func GetContributorId(w http.ResponseWriter, q map[string]string, b string, db *sql.DB) {
     query := `
         UPDATE TOP (1) Posts
         SET NextUserID = NextUserID + 1
         OUTPUT INSERTED.NextUserID
-        WHERE ID = %s
+        WHERE ID = $1
        `
-    idrow, err := db.Query(fmt.Sprintf(query, postIds[0]))
+    idrow, err := db.Query(query, q["postId"])
     if err != nil {
         http.Error(w, err.Error(), http.StatusInternalServerError)
         return
