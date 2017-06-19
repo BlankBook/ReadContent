@@ -58,16 +58,16 @@ func GetComments(w http.ResponseWriter, q map[string]string, b string, db *sql.D
     }()
     parentPost := q["parentPost"]
     parentComment := q["parentComment"]
-    var query string
-    var parent string
+    var rows *sql.Rows
     if parentComment != "" {
-        query = "SELECT " + models.CommentSQLColumns + " FROM Comments WHERE ParentComment=$1"
-        parent = parentComment
+        query := "SELECT " + models.CommentSQLColumns +
+                 " FROM Comments WHERE ParentComment=$1 AND ParentPost=$2"
+        rows, err = db.Query(query, parentComment, parentPost)
     } else {
-        query = "SELECT " + models.CommentSQLColumns + " FROM Comments WHERE ParentPost=$1"
-        parent = parentPost
+        query := "SELECT " + models.CommentSQLColumns +
+                 " FROM Comments WHERE ParentPost=$1"
+        rows, err = db.Query(query, parentPost)
     }
-    rows, err := db.Query(query, parent)
     if err != nil {
         return
     }
