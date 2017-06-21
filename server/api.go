@@ -16,7 +16,7 @@ const defaultMaxPostsReturned = 1000
 // SetupAPI adds the API routes to the provided router
 func SetupAPI(r web.Router, db *sql.DB) {
     r.HandleRoute([]string{web.GET}, "/posts",
-                  []string{"groupName"}, []string{"firstRank", "lastRank"},
+                  []string{"groupName"}, []string{"firstRank", "lastRank", "rankVersion"},
                   GetPosts, db)
     r.HandleRoute([]string{web.GET}, "/comments",
                   []string{"parentPost"}, []string{"parentComment"},
@@ -43,6 +43,7 @@ func GetPosts(w http.ResponseWriter, q map[string]string, b string, db *sql.DB) 
 
     var firstRank int64
     var lastRank int64
+    var rankVersion int64
     if val, ok := q["firstRank"]; ok && val != "" {
         firstRank, err = strconv.ParseInt(val, 10, 64)
     } else {
@@ -53,45 +54,59 @@ func GetPosts(w http.ResponseWriter, q map[string]string, b string, db *sql.DB) 
     } else {
         lastRank = firstRank + defaultMaxPostsReturned
     }
-    if err != nil {
-        return
+    if val, ok := q["rankVersion"]; ok && val != "" {
+        rankVersion, err = strconv.ParseInt(val, 10, 64)
+    } else {
+        rankVersion = -1
     }
+    if err != nil { return }
     var posts []models.Post
-    var rankVersion int64
     gotRows := make(chan bool)
     gotVers := make(chan bool)
     go func() {
         var rows *sql.Rows
-        query :=
-            `SELECT ` + models.PostSQLColumns + ` FROM Posts 
-              WHERE GroupName=$1 AND Rank >= $2 AND Rank <= $3
-              ORDER BY Rank;
-              SELECT RankVersion from State`
-        rows, err = db.Query(query, q["groupName"], firstRank, lastRank)
+        query := `
+            DECLARE @LatestRankVersion BIGINT
+            SET @LatestRankVersion = (SELECT RankVersion FROM State)
+            IF ($4=@LatestRankVersion OR $4=-1)
+            BEGIN
+                SELECT `+models.PostSQLColumnsNewRank+` FROM Posts
+                WHERE GroupName=$1 AND Rank >= $2 AND Rank <= $3
+                ORDER BY Rank
+            END
+            ELSE
+            BEGIN
+                SELECT `+models.PostSQLColumnsOldRank+` FROM Posts
+                WHERE GroupName=$1 AND OldRank >= $2 AND OldRank <= $3
+                ORDER BY OldRank
+            END`
+        rows, err = db.Query(query, q["groupName"], firstRank, lastRank, rankVersion)
         if err == nil {
             posts, err = models.GetPostsFromRows(rows)
         }
         gotRows <- true
     }()
-    go func() {
-        var rows *sql.Rows
-        query := `SELECT RankVersion FROM State`
-        rows, err = db.Query(query)
-        defer rows.Close()
-        rows.Next()
-        err = rows.Scan(&rankVersion)
-        gotVers <- true
-    }()
+    // If the rank version is not specified, we get the most recent version
+    // number
+    if rankVersion == -1 {
+        go func() {
+            var rows *sql.Rows
+            query := `SELECT RankVersion FROM State`
+            rows, err = db.Query(query)
+            defer rows.Close()
+            rows.Next()
+            if err == nil {
+                err = rows.Scan(&rankVersion)
+            }
+            gotVers <- true
+        }()
+        <-gotVers
+    }
     <-gotRows
-    <-gotVers
 
-    if err != nil {
-        return
-    }
+    if err != nil { return }
     res, err := json.Marshal(postsWithVersion{posts, rankVersion})
-    if err != nil {
-        return
-    }
+    if err != nil { return }
     w.Header().Set("Content-Type", "application/json")
     w.Write(res)
 }
