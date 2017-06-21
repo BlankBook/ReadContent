@@ -12,14 +12,19 @@ import (
 )
 
 const defaultMaxPostsReturned = 1000
+const timeOrderingKeyword = "time"
+const rankOrderingKeyword = "rank"
 
 // SetupAPI adds the API routes to the provided router
 func SetupAPI(r web.Router, db *sql.DB) {
     r.HandleRoute([]string{web.GET}, "/posts",
-                  []string{"groupName"}, []string{"firstRank", "lastRank", "rankVersion"},
+                  []string{"groupName"},
+                  []string{"firstRank", "lastRank", "rankVersion", "ordering",
+                           "firstTime", "lastTime", "maxCount"},
                   GetPosts, db)
     r.HandleRoute([]string{web.GET}, "/comments",
-                  []string{"parentPost"}, []string{"parentComment"},
+                  []string{"parentPost"},
+                  []string{"parentComment"},
                   GetComments, db)
     // Get /contributorid gets a unique ID that must be used for all 
     // contributions the user makes to this post
@@ -28,12 +33,20 @@ func SetupAPI(r web.Router, db *sql.DB) {
                   GetContributorId, db)
 }
 
-type postsWithVersion struct {
-    Posts []models.Post
-    RankVersion int64
+func GetPosts(w http.ResponseWriter, q map[string]string, b string, db *sql.DB) {
+    if val, _ := q["ordering"]; val == timeOrderingKeyword {
+        GetPostsByTime(w, q, b, db)
+    } else {
+        GetPostsByRank(w, q, b, db)
+    }
 }
 
-func GetPosts(w http.ResponseWriter, q map[string]string, b string, db *sql.DB) {
+type postsWithTime struct {
+    Posts []models.Post
+    OldestPost int64
+}
+
+func GetPostsByTime(w http.ResponseWriter, q map[string]string, b string, db *sql.DB) {
     var err error
     defer func() {
         if err != nil {
@@ -41,25 +54,92 @@ func GetPosts(w http.ResponseWriter, q map[string]string, b string, db *sql.DB) 
         }
     }()
 
-    var firstRank int64
+    var firstTime int64 = -1
+    var lastTime int64 = -1
+    var maxCount = defaultMaxPostsReturned
+    if q["firstTime"] != "" {
+        firstTime, err = strconv.ParseInt(q["firstTime"], 10, 64)
+    }
+    if q["lastTime"] != "" {
+        lastTime, err = strconv.ParseInt(q["lastTime"], 10, 64)
+    }
+    if q["maxCount"] != "" {
+        maxCount, err = strconv.Atoi(q["maxCount"])
+    }
+
+    if err != nil { return }
+    var posts []models.Post
+    var rows *sql.Rows
+    if firstTime == -1 && lastTime == -1 {
+        query := `
+            SELECT TOP ($1) `+models.PostSQLColumnsNewRank+` FROM Posts
+            WHERE GroupName=$2
+            ORDER BY Time`
+        rows, err = db.Query(query, maxCount, q["groupName"])
+    } else if firstTime == -1 {
+        query := `
+            SELECT TOP ($1) `+models.PostSQLColumnsNewRank+` FROM Posts
+            WHERE GroupName=$2 AND Time <= $3
+            ORDER BY Time`
+        rows, err = db.Query(query, maxCount, q["groupName"], lastTime)
+    } else if lastTime == -1 {
+        query := `
+            SELECT TOP ($1) `+models.PostSQLColumnsNewRank+` FROM Posts
+            WHERE GroupName=$2 AND $3 <= Time
+            ORDER BY Time`
+        rows, err = db.Query(query, maxCount, q["groupName"], firstTime)
+    } else {
+        query := `
+            SELECT TOP ($1) `+models.PostSQLColumnsNewRank+` FROM Posts
+            WHERE GroupName=$2 AND $3 <= Time AND Time <= $4
+            ORDER BY Time`
+        rows, err = db.Query(query, maxCount, q["groupName"], firstTime, lastTime)
+    }
+    if err == nil {
+        posts, err = models.GetPostsFromRows(rows)
+    }
+
+    if err != nil { return }
+    res, err := json.Marshal(postsWithTime{posts, firstTime})
+    if err != nil { return }
+    w.Header().Set("Content-Type", "application/json")
+    w.Write(res)
+}
+
+
+type postsWithVersion struct {
+    Posts []models.Post
+    RankVersion int64
+}
+
+func GetPostsByRank(w http.ResponseWriter, q map[string]string, b string, db *sql.DB) {
+    var err error
+    defer func() {
+        if err != nil {
+            http.Error(w, err.Error(), http.StatusInternalServerError)
+        }
+    }()
+
+    var firstRank int64 = 0
     var lastRank int64
-    var rankVersion int64
-    if val, ok := q["firstRank"]; ok && val != "" {
-        firstRank, err = strconv.ParseInt(val, 10, 64)
-    } else {
-        firstRank = 0
+    var rankVersion int64 = -1
+    var maxCount = defaultMaxPostsReturned
+    if q["firstRank"] != "" {
+        firstRank, err = strconv.ParseInt(q["firstRank"], 10, 64)
     }
-    if val, ok := q["lastRank"]; ok && val != "" {
-        lastRank, err = strconv.ParseInt(val, 10, 64)
-    } else {
+    if q["lastRank"] == "" {
         lastRank = firstRank + defaultMaxPostsReturned
-    }
-    if val, ok := q["rankVersion"]; ok && val != "" {
-        rankVersion, err = strconv.ParseInt(val, 10, 64)
     } else {
-        rankVersion = -1
+        lastRank, err = strconv.ParseInt(q["lastRank"], 10, 64)
+    }
+    if q["rankVersion"] != "" {
+        rankVersion, err = strconv.ParseInt(q["rankVersion"], 10, 64)
+    }
+    if q["maxCount"] != "" {
+        maxCount, err = strconv.Atoi(q["maxCount"])
     }
     if err != nil { return }
+
     var posts []models.Post
     gotRows := make(chan bool)
     gotVers := make(chan bool)
@@ -68,40 +148,46 @@ func GetPosts(w http.ResponseWriter, q map[string]string, b string, db *sql.DB) 
         query := `
             DECLARE @LatestRankVersion BIGINT
             SET @LatestRankVersion = (SELECT RankVersion FROM State)
-            IF ($4=@LatestRankVersion OR $4=-1)
+            IF ($5=@LatestRankVersion OR $5=-1)
             BEGIN
-                SELECT `+models.PostSQLColumnsNewRank+` FROM Posts
-                WHERE GroupName=$1 AND Rank >= $2 AND Rank <= $3
+                SELECT TOP ($1) `+models.PostSQLColumnsNewRank+` FROM Posts
+                WHERE GroupName=$2 AND Rank >= $3 AND Rank <= $4
                 ORDER BY Rank
             END
             ELSE
             BEGIN
-                SELECT `+models.PostSQLColumnsOldRank+` FROM Posts
-                WHERE GroupName=$1 AND OldRank >= $2 AND OldRank <= $3
+                SELECT TOP ($1) `+models.PostSQLColumnsOldRank+` FROM Posts
+                WHERE GroupName=$2 AND OldRank >= $3 AND OldRank <= $4
                 ORDER BY OldRank
             END`
-        rows, err = db.Query(query, q["groupName"], firstRank, lastRank, rankVersion)
+        rows, err = db.Query(query, maxCount, q["groupName"], firstRank, lastRank, rankVersion)
         if err == nil {
             posts, err = models.GetPostsFromRows(rows)
         }
         gotRows <- true
     }()
-    // If the rank version is not specified, we get the most recent version
-    // number
-    if rankVersion == -1 {
-        go func() {
-            var rows *sql.Rows
-            query := `SELECT RankVersion FROM State`
-            rows, err = db.Query(query)
-            defer rows.Close()
-            rows.Next()
-            if err == nil {
-                err = rows.Scan(&rankVersion)
+    go func() {
+        var rows *sql.Rows
+        query := `SELECT RankVersion FROM State`
+        rows, err = db.Query(query)
+        defer rows.Close()
+        rows.Next()
+        if err == nil {
+            var publicRankVersion int64
+            err = rows.Scan(&publicRankVersion)
+            // Determine the actual version of rankings we are sending to
+            // the client - it is either the latest public version, if
+            // the client is requesting a higher rank or has not specified it,
+            // or one less if the client wants an older version of the rankings
+            if rankVersion == -1 || rankVersion > publicRankVersion {
+                rankVersion = publicRankVersion
+            } else {
+                rankVersion = publicRankVersion - 1
             }
-            gotVers <- true
-        }()
-        <-gotVers
-    }
+        }
+        gotVers <- true
+    }()
+    <-gotVers
     <-gotRows
 
     if err != nil { return }
