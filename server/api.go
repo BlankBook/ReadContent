@@ -2,6 +2,7 @@ package server
 
 import (
     "fmt"
+    "strconv"
     "net/http"
     "database/sql"
     "encoding/json"
@@ -10,10 +11,12 @@ import (
     "github.com/blankbook/shared/web"
 )
 
+const defaultMaxPostsReturned = 1000
+
 // SetupAPI adds the API routes to the provided router
 func SetupAPI(r web.Router, db *sql.DB) {
     r.HandleRoute([]string{web.GET}, "/posts",
-                  []string{}, []string{},
+                  []string{"groupName"}, []string{"firstRank", "lastRank"},
                   GetPosts, db)
     r.HandleRoute([]string{web.GET}, "/comments",
                   []string{"parentPost"}, []string{"parentComment"},
@@ -25,6 +28,11 @@ func SetupAPI(r web.Router, db *sql.DB) {
                   GetContributorId, db)
 }
 
+type postsWithVersion struct {
+    Posts []models.Post
+    RankVersion int64
+}
+
 func GetPosts(w http.ResponseWriter, q map[string]string, b string, db *sql.DB) {
     var err error
     defer func() {
@@ -32,16 +40,55 @@ func GetPosts(w http.ResponseWriter, q map[string]string, b string, db *sql.DB) 
             http.Error(w, err.Error(), http.StatusInternalServerError)
         }
     }()
-    query := "SELECT " + models.PostSQLColumns + " FROM Posts"
-    rows, err := db.Query(query)
+
+    var firstRank int64
+    var lastRank int64
+    if val, ok := q["firstRank"]; ok && val != "" {
+        firstRank, err = strconv.ParseInt(val, 10, 64)
+    } else {
+        firstRank = 0
+    }
+    if val, ok := q["lastRank"]; ok && val != "" {
+        lastRank, err = strconv.ParseInt(val, 10, 64)
+    } else {
+        lastRank = firstRank + defaultMaxPostsReturned
+    }
     if err != nil {
         return
     }
-    posts, err := models.GetPostsFromRows(rows)
+    var posts []models.Post
+    var rankVersion int64
+    gotRows := make(chan bool)
+    gotVers := make(chan bool)
+    go func() {
+        var rows *sql.Rows
+        query :=
+            `SELECT ` + models.PostSQLColumns + ` FROM Posts 
+              WHERE GroupName=$1 AND Rank >= $2 AND Rank <= $3
+              ORDER BY Rank;
+              SELECT RankVersion from State`
+        rows, err = db.Query(query, q["groupName"], firstRank, lastRank)
+        if err == nil {
+            posts, err = models.GetPostsFromRows(rows)
+        }
+        gotRows <- true
+    }()
+    go func() {
+        var rows *sql.Rows
+        query := `SELECT RankVersion FROM State`
+        rows, err = db.Query(query)
+        defer rows.Close()
+        rows.Next()
+        err = rows.Scan(&rankVersion)
+        gotVers <- true
+    }()
+    <-gotRows
+    <-gotVers
+
     if err != nil {
         return
     }
-    res, err := json.Marshal(posts)
+    res, err := json.Marshal(postsWithVersion{posts, rankVersion})
     if err != nil {
         return
     }
