@@ -18,18 +18,18 @@ const rankOrderingKeyword = "rank"
 // SetupAPI adds the API routes to the provided router
 func SetupAPI(r web.Router, db *sql.DB) {
     r.HandleRoute([]string{web.GET}, "/posts",
-                  []string{"groupName"},
-                  []string{"firstRank", "lastRank", "rankVersion", "ordering",
-                           "firstTime", "lastTime", "maxCount"},
+                  []string{"groupname"},
+                  []string{"firstrank", "lastRank", "rankversion", "ordering",
+                           "firsttime", "lastTime", "maxcount"},
                   GetPosts, db)
     r.HandleRoute([]string{web.GET}, "/comments",
-                  []string{"parentPost"},
-                  []string{"parentComment"},
+                  []string{"parentpost"},
+                  []string{"parentcomment", "ordering"},
                   GetComments, db)
     // Get /contributorid gets a unique ID that must be used for all 
     // contributions the user makes to this post
     r.HandleRoute([]string{web.GET}, "/contributorid",
-                  []string{"postId"}, []string{},
+                  []string{"postid"}, []string{},
                   GetContributorId, db)
 }
 
@@ -57,14 +57,14 @@ func GetPostsByTime(w http.ResponseWriter, q map[string]string, b string, db *sq
     var firstTime int64 = -1
     var lastTime int64 = -1
     var maxCount = defaultMaxPostsReturned
-    if q["firstTime"] != "" {
-        firstTime, err = strconv.ParseInt(q["firstTime"], 10, 64)
+    if q["firsttime"] != "" {
+        firstTime, err = strconv.ParseInt(q["firsttime"], 10, 64)
     }
-    if q["lastTime"] != "" {
-        lastTime, err = strconv.ParseInt(q["lastTime"], 10, 64)
+    if q["lasttime"] != "" {
+        lastTime, err = strconv.ParseInt(q["lasttime"], 10, 64)
     }
-    if q["maxCount"] != "" {
-        maxCount, err = strconv.Atoi(q["maxCount"])
+    if q["maxcount"] != "" {
+        maxCount, err = strconv.Atoi(q["maxcount"])
     }
 
     if err != nil { return }
@@ -74,26 +74,26 @@ func GetPostsByTime(w http.ResponseWriter, q map[string]string, b string, db *sq
         query := `
             SELECT TOP ($1) `+models.PostSQLColumnsNewRank+` FROM Posts
             WHERE GroupName=$2
-            ORDER BY Time`
-        rows, err = db.Query(query, maxCount, q["groupName"])
+            ORDER BY Time DESC`
+        rows, err = db.Query(query, maxCount, q["groupname"])
     } else if firstTime == -1 {
         query := `
             SELECT TOP ($1) `+models.PostSQLColumnsNewRank+` FROM Posts
             WHERE GroupName=$2 AND Time <= $3
-            ORDER BY Time`
-        rows, err = db.Query(query, maxCount, q["groupName"], lastTime)
+            ORDER BY Time DESC`
+        rows, err = db.Query(query, maxCount, q["groupname"], lastTime)
     } else if lastTime == -1 {
         query := `
             SELECT TOP ($1) `+models.PostSQLColumnsNewRank+` FROM Posts
             WHERE GroupName=$2 AND $3 <= Time
-            ORDER BY Time`
-        rows, err = db.Query(query, maxCount, q["groupName"], firstTime)
+            ORDER BY Time DESC`
+        rows, err = db.Query(query, maxCount, q["groupname"], firstTime)
     } else {
         query := `
             SELECT TOP ($1) `+models.PostSQLColumnsNewRank+` FROM Posts
             WHERE GroupName=$2 AND $3 <= Time AND Time <= $4
-            ORDER BY Time`
-        rows, err = db.Query(query, maxCount, q["groupName"], firstTime, lastTime)
+            ORDER BY Time DESC`
+        rows, err = db.Query(query, maxCount, q["groupname"], firstTime, lastTime)
     }
     if err == nil {
         posts, err = models.GetPostsFromRows(rows)
@@ -124,19 +124,19 @@ func GetPostsByRank(w http.ResponseWriter, q map[string]string, b string, db *sq
     var lastRank int64
     var rankVersion int64 = -1
     var maxCount = defaultMaxPostsReturned
-    if q["firstRank"] != "" {
-        firstRank, err = strconv.ParseInt(q["firstRank"], 10, 64)
+    if q["firstrank"] != "" {
+        firstRank, err = strconv.ParseInt(q["firstrank"], 10, 64)
     }
-    if q["lastRank"] == "" {
+    if q["lastrank"] == "" {
         lastRank = firstRank + defaultMaxPostsReturned
     } else {
-        lastRank, err = strconv.ParseInt(q["lastRank"], 10, 64)
+        lastRank, err = strconv.ParseInt(q["lastrank"], 10, 64)
     }
-    if q["rankVersion"] != "" {
-        rankVersion, err = strconv.ParseInt(q["rankVersion"], 10, 64)
+    if q["rankversion"] != "" {
+        rankVersion, err = strconv.ParseInt(q["rankversion"], 10, 64)
     }
-    if q["maxCount"] != "" {
-        maxCount, err = strconv.Atoi(q["maxCount"])
+    if q["maxcount"] != "" {
+        maxCount, err = strconv.Atoi(q["maxcount"])
     }
     if err != nil { return }
 
@@ -160,7 +160,7 @@ func GetPostsByRank(w http.ResponseWriter, q map[string]string, b string, db *sq
                 WHERE GroupName=$2 AND OldRank >= $3 AND OldRank <= $4
                 ORDER BY OldRank
             END`
-        rows, err = db.Query(query, maxCount, q["groupName"], firstRank, lastRank, rankVersion)
+        rows, err = db.Query(query, maxCount, q["groupname"], firstRank, lastRank, rankVersion)
         if err == nil {
             posts, err = models.GetPostsFromRows(rows)
         }
@@ -204,21 +204,29 @@ func GetComments(w http.ResponseWriter, q map[string]string, b string, db *sql.D
             http.Error(w, err.Error(), http.StatusInternalServerError)
         }
     }()
-    parentPost := q["parentPost"]
-    parentComment := q["parentComment"]
+
+    parentPost := q["parentpost"]
+    parentComment := q["parentcomment"]
+    ordering := "ORDER BY Score DESC, Time DESC"
+    if q["ordering"] == timeOrderingKeyword {
+        ordering = "ORDER BY Time DESC, Score DESC"
+    }
+
     var rows *sql.Rows
     if parentComment != "" {
-        query := "SELECT " + models.CommentSQLColumns +
-                 " FROM Comments WHERE ParentComment=$1 AND ParentPost=$2"
+        query := `SELECT `+models.CommentSQLColumns+` FROM Comments
+            WHERE ParentComment=$1 AND ParentPost=$2 `+ordering
+        fmt.Printf(query)
         rows, err = db.Query(query, parentComment, parentPost)
     } else {
-        query := "SELECT " + models.CommentSQLColumns +
-                 " FROM Comments WHERE ParentPost=$1"
+        query := `SELECT `+models.CommentSQLColumns+`
+            FROM Comments WHERE ParentPost=$1 `+ordering
         rows, err = db.Query(query, parentPost)
     }
     if err != nil {
         return
     }
+
     posts, err := models.GetCommentsFromRows(rows)
     if err != nil {
         return
@@ -238,7 +246,7 @@ func GetContributorId(w http.ResponseWriter, q map[string]string, b string, db *
         OUTPUT INSERTED.NextUserID
         WHERE ID = $1
        `
-    idrow, err := db.Query(query, q["postId"])
+    idrow, err := db.Query(query, q["postid"])
     if err != nil {
         http.Error(w, err.Error(), http.StatusInternalServerError)
         return
