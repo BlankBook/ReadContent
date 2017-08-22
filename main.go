@@ -12,7 +12,7 @@ func main() {
     server.SetupRoutes()
 
     var port int
-    flag.IntVar(&port, "port", 8080, "The port to listen on")
+    flag.IntVar(&port, "port", 80, "The port to listen on")
     flag.Parse()
     http.ListenAndServe(fmt.Sprintf(":%d", port), nil)
 }
