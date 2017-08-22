@@ -31,6 +31,9 @@ func SetupAPI(r web.Router, db *sql.DB) {
     r.HandleRoute([]string{web.GET}, "/contributorid",
                   []string{"postid"}, []string{},
                   GetContributorId, db)
+    r.HandleRoute([]string{web.GET}, "/health",
+                  []string{}, []string{},
+                  GetHealth, db)
 }
 
 func GetPosts(w http.ResponseWriter, q map[string]string, b string, db *sql.DB) {
@@ -262,4 +265,8 @@ func GetContributorId(w http.ResponseWriter, q map[string]string, b string, db *
     res := fmt.Sprintf(`{"id":%d}`, id)
     w.Header().Set("Content-Type", "application/json")
     w.Write([]byte(res))
+}
+
+func GetHealth(w http.ResponseWriter, q map[string]string, b string, db *sql.DB) {
+    w.WriteHeader(http.StatusOK)
 }
