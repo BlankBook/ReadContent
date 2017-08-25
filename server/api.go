@@ -19,8 +19,8 @@ const rankOrderingKeyword = "rank"
 func SetupAPI(r web.Router, db *sql.DB) {
     r.HandleRoute([]string{web.GET}, "/posts",
                   []string{"groupname"},
-                  []string{"firstrank", "lastRank", "rankversion", "ordering",
-                           "firsttime", "lastTime", "maxcount"},
+                  []string{"firstrank", "lastrank", "rankversion", "ordering",
+                           "firsttime", "lasttime", "maxcount"},
                   GetPosts, db)
     r.HandleRoute([]string{web.GET}, "/comments",
                   []string{"parentpost"},
@@ -73,31 +73,23 @@ func GetPostsByTime(w http.ResponseWriter, q map[string]string, b string, db *sq
     if err != nil { return }
     var posts []models.Post
     var rows *sql.Rows
+    query := "SELECT TOP ($1) "+models.PostSQLColumnsNewRank+" FROM Posts "
+    args := []interface{}{maxCount}
     if firstTime == -1 && lastTime == -1 {
-        query := `
-            SELECT TOP ($1) `+models.PostSQLColumnsNewRank+` FROM Posts
-            WHERE GroupName=$2
-            ORDER BY Time DESC`
-        rows, err = db.Query(query, maxCount, q["groupname"])
+        query += "WHERE GroupName=$2 "
+        args = append(args, q["groupname"])
     } else if firstTime == -1 {
-        query := `
-            SELECT TOP ($1) `+models.PostSQLColumnsNewRank+` FROM Posts
-            WHERE GroupName=$2 AND Time <= $3
-            ORDER BY Time DESC`
-        rows, err = db.Query(query, maxCount, q["groupname"], lastTime)
+        query += "WHERE GroupName=$2 AND Time <= $3 "
+        args = append(args, q["groupname"], lastTime)
     } else if lastTime == -1 {
-        query := `
-            SELECT TOP ($1) `+models.PostSQLColumnsNewRank+` FROM Posts
-            WHERE GroupName=$2 AND $3 <= Time
-            ORDER BY Time DESC`
-        rows, err = db.Query(query, maxCount, q["groupname"], firstTime)
+        query += "WHERE GroupName=$2 AND $3 <= Time "
+        args = append(args, q["groupname"], firstTime)
     } else {
-        query := `
-            SELECT TOP ($1) `+models.PostSQLColumnsNewRank+` FROM Posts
-            WHERE GroupName=$2 AND $3 <= Time AND Time <= $4
-            ORDER BY Time DESC`
-        rows, err = db.Query(query, maxCount, q["groupname"], firstTime, lastTime)
+        query += "WHERE GroupName=$2 AND $3 <= Time AND Time <= $4 "
+        args = append(args, q["groupname"], firstTime, lastTime)
     }
+    query += "ORDER BY Time DESC"
+    rows, err = db.Query(query, args...)
     if err == nil {
         posts, err = models.GetPostsFromRows(rows)
     }
