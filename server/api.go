@@ -69,25 +69,41 @@ func GetPostsByTime(w http.ResponseWriter, q map[string][]string, b string, db *
     if v, ok := q["maxcount"]; ok {
         maxCount, err = strconv.Atoi(v[0])
     }
+    groupNames := q["groupname"]
 
     if err != nil { return }
     var posts []models.Post
     var rows *sql.Rows
-    query := "SELECT TOP ($1) "+models.PostSQLColumnsNewRank+" FROM Posts "
+
     args := []interface{}{maxCount}
-    if firstTime == -1 && lastTime == -1 {
-        query += "WHERE GroupName=$2 "
-        args = append(args, q["groupname"][0])
-    } else if firstTime == -1 {
-        query += "WHERE GroupName=$2 AND Time <= $3 "
-        args = append(args, q["groupname"][0], lastTime)
-    } else if lastTime == -1 {
-        query += "WHERE GroupName=$2 AND $3 <= Time "
-        args = append(args, q["groupname"][0], firstTime)
-    } else {
-        query += "WHERE GroupName=$2 AND $3 <= Time AND Time <= $4 "
-        args = append(args, q["groupname"][0], firstTime, lastTime)
+    query := "SELECT TOP ($1) " + 
+        models.PostSQLColumnsNewRank + 
+        " FROM Posts WHERE GroupName IN ("
+
+    for i, n := range groupNames {
+        args = append(args, n)
+        query += "$" + strconv.Itoa(len(args))
+        if i + 1 == len(groupNames) {
+            query += ") "
+        } else {
+            query += ", "
+        }
     }
+
+    if firstTime == -1 && lastTime == -1 {
+    } else if firstTime == -1 {
+        args = append(args, lastTime)
+        query += "AND Time <= $" + strconv.Itoa(len(args)) + " "
+    } else if lastTime == -1 {
+        args = append(args, firstTime)
+        query += "AND $" + strconv.Itoa(len(args)) + " <= Time "
+    } else {
+        args = append(args, firstTime)
+        query += "AND $" + strconv.Itoa(len(args)) + " <= Time " 
+        args = append(args, lastTime)
+        query += "AND Time <= $" + strconv.Itoa(len(args)) + " "
+    }
+
     query += "ORDER BY Time DESC"
     rows, err = db.Query(query, args...)
     if err == nil {
@@ -133,29 +149,44 @@ func GetPostsByRank(w http.ResponseWriter, q map[string][]string, b string, db *
     if v, ok := q["maxcount"]; ok {
         maxCount, err = strconv.Atoi(v[0])
     }
+    groupNames := q["groupname"]
     if err != nil { return }
 
     var posts []models.Post
     gotRows := make(chan bool)
     gotVers := make(chan bool)
     go func() {
+        args := []interface{}{maxCount, firstRank, lastRank, rankVersion}
         var rows *sql.Rows
+        groupNameArrayOffset := 5
+        groupNameArray := "("
+        for i, n := range groupNames {
+            args = append(args, n)
+            groupNameArray += "$" + strconv.Itoa(i + groupNameArrayOffset)
+            if i + 1 == len(groupNames) {
+                groupNameArray += ")"
+            } else  {
+                groupNameArray += ", "
+            }
+        }
         query := `
             DECLARE @LatestRankVersion BIGINT
             SET @LatestRankVersion = (SELECT RankVersion FROM State)
-            IF ($5=@LatestRankVersion OR $5=-1)
+            IF ($4=@LatestRankVersion OR $4=-1)
             BEGIN
                 SELECT TOP ($1) `+models.PostSQLColumnsNewRank+` FROM Posts
-                WHERE GroupName=$2 AND Rank >= $3 AND Rank <= $4
+                WHERE GroupName IN `+groupNameArray+`
+                AND Rank >= $2 AND Rank <= $3
                 ORDER BY Rank
             END
             ELSE
             BEGIN
                 SELECT TOP ($1) `+models.PostSQLColumnsOldRank+` FROM Posts
-                WHERE GroupName=$2 AND OldRank >= $3 AND OldRank <= $4
+                WHERE GroupName IN `+groupNameArray+`
+                AND OldRank >= $2 AND OldRank <= $3
                 ORDER BY OldRank
             END`
-        rows, err = db.Query(query, maxCount, q["groupname"][0], firstRank, lastRank, rankVersion)
+        rows, err = db.Query(query, args...)
         if err == nil {
             posts, err = models.GetPostsFromRows(rows)
         }
@@ -211,7 +242,6 @@ func GetComments(w http.ResponseWriter, q map[string][]string, b string, db *sql
     if parentComment != "" {
         query := `SELECT `+models.CommentSQLColumns+` FROM Comments
             WHERE ParentComment=$1 AND ParentPost=$2 `+ordering
-        fmt.Printf(query)
         rows, err = db.Query(query, parentComment, parentPost)
     } else {
         query := `SELECT `+models.CommentSQLColumns+`
