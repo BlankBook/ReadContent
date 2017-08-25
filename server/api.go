@@ -36,8 +36,8 @@ func SetupAPI(r web.Router, db *sql.DB) {
                   GetHealth, db)
 }
 
-func GetPosts(w http.ResponseWriter, q map[string]string, b string, db *sql.DB) {
-    if val, _ := q["ordering"]; val == timeOrderingKeyword {
+func GetPosts(w http.ResponseWriter, q map[string][]string, b string, db *sql.DB) {
+    if v, ok := q["ordering"]; ok && v[0] == timeOrderingKeyword {
         GetPostsByTime(w, q, b, db)
     } else {
         GetPostsByRank(w, q, b, db)
@@ -49,7 +49,7 @@ type postsWithTime struct {
     OldestPost int64
 }
 
-func GetPostsByTime(w http.ResponseWriter, q map[string]string, b string, db *sql.DB) {
+func GetPostsByTime(w http.ResponseWriter, q map[string][]string, b string, db *sql.DB) {
     var err error
     defer func() {
         if err != nil {
@@ -60,14 +60,14 @@ func GetPostsByTime(w http.ResponseWriter, q map[string]string, b string, db *sq
     var firstTime int64 = -1
     var lastTime int64 = -1
     var maxCount = defaultMaxPostsReturned
-    if q["firsttime"] != "" {
-        firstTime, err = strconv.ParseInt(q["firsttime"], 10, 64)
+    if v, ok := q["firsttime"]; ok {
+        firstTime, err = strconv.ParseInt(v[0], 10, 64)
     }
-    if q["lasttime"] != "" {
-        lastTime, err = strconv.ParseInt(q["lasttime"], 10, 64)
+    if v, ok := q["lasttime"]; ok {
+        lastTime, err = strconv.ParseInt(v[0], 10, 64)
     }
-    if q["maxcount"] != "" {
-        maxCount, err = strconv.Atoi(q["maxcount"])
+    if v, ok := q["maxcount"]; ok {
+        maxCount, err = strconv.Atoi(v[0])
     }
 
     if err != nil { return }
@@ -77,16 +77,16 @@ func GetPostsByTime(w http.ResponseWriter, q map[string]string, b string, db *sq
     args := []interface{}{maxCount}
     if firstTime == -1 && lastTime == -1 {
         query += "WHERE GroupName=$2 "
-        args = append(args, q["groupname"])
+        args = append(args, q["groupname"][0])
     } else if firstTime == -1 {
         query += "WHERE GroupName=$2 AND Time <= $3 "
-        args = append(args, q["groupname"], lastTime)
+        args = append(args, q["groupname"][0], lastTime)
     } else if lastTime == -1 {
         query += "WHERE GroupName=$2 AND $3 <= Time "
-        args = append(args, q["groupname"], firstTime)
+        args = append(args, q["groupname"][0], firstTime)
     } else {
         query += "WHERE GroupName=$2 AND $3 <= Time AND Time <= $4 "
-        args = append(args, q["groupname"], firstTime, lastTime)
+        args = append(args, q["groupname"][0], firstTime, lastTime)
     }
     query += "ORDER BY Time DESC"
     rows, err = db.Query(query, args...)
@@ -107,7 +107,7 @@ type postsWithVersion struct {
     RankVersion int64
 }
 
-func GetPostsByRank(w http.ResponseWriter, q map[string]string, b string, db *sql.DB) {
+func GetPostsByRank(w http.ResponseWriter, q map[string][]string, b string, db *sql.DB) {
     var err error
     defer func() {
         if err != nil {
@@ -119,19 +119,19 @@ func GetPostsByRank(w http.ResponseWriter, q map[string]string, b string, db *sq
     var lastRank int64
     var rankVersion int64 = -1
     var maxCount = defaultMaxPostsReturned
-    if q["firstrank"] != "" {
-        firstRank, err = strconv.ParseInt(q["firstrank"], 10, 64)
-    }
-    if q["lastrank"] == "" {
-        lastRank = firstRank + defaultMaxPostsReturned
+    if v, ok := q["firstrank"]; ok {
+        firstRank, err = strconv.ParseInt(v[0], 10, 64)
+    } 
+    if v, ok := q["lastrank"]; ok {
+        lastRank, err = strconv.ParseInt(v[0], 10, 64)
     } else {
-        lastRank, err = strconv.ParseInt(q["lastrank"], 10, 64)
+        lastRank = firstRank + defaultMaxPostsReturned
     }
-    if q["rankversion"] != "" {
-        rankVersion, err = strconv.ParseInt(q["rankversion"], 10, 64)
+    if v, ok := q["rankversion"]; ok {
+        rankVersion, err = strconv.ParseInt(v[0], 10, 64)
     }
-    if q["maxcount"] != "" {
-        maxCount, err = strconv.Atoi(q["maxcount"])
+    if v, ok := q["maxcount"]; ok {
+        maxCount, err = strconv.Atoi(v[0])
     }
     if err != nil { return }
 
@@ -155,7 +155,7 @@ func GetPostsByRank(w http.ResponseWriter, q map[string]string, b string, db *sq
                 WHERE GroupName=$2 AND OldRank >= $3 AND OldRank <= $4
                 ORDER BY OldRank
             END`
-        rows, err = db.Query(query, maxCount, q["groupname"], firstRank, lastRank, rankVersion)
+        rows, err = db.Query(query, maxCount, q["groupname"][0], firstRank, lastRank, rankVersion)
         if err == nil {
             posts, err = models.GetPostsFromRows(rows)
         }
@@ -192,7 +192,7 @@ func GetPostsByRank(w http.ResponseWriter, q map[string]string, b string, db *sq
     w.Write(res)
 }
 
-func GetComments(w http.ResponseWriter, q map[string]string, b string, db *sql.DB) {
+func GetComments(w http.ResponseWriter, q map[string][]string, b string, db *sql.DB) {
     var err error
     defer func() {
         if err != nil {
@@ -200,10 +200,10 @@ func GetComments(w http.ResponseWriter, q map[string]string, b string, db *sql.D
         }
     }()
 
-    parentPost := q["parentpost"]
-    parentComment := q["parentcomment"]
+    parentPost := q["parentpost"][0]
+    parentComment := q["parentcomment"][0]
     ordering := "ORDER BY Score DESC, Time DESC"
-    if q["ordering"] == timeOrderingKeyword {
+    if q["ordering"][0] == timeOrderingKeyword {
         ordering = "ORDER BY Time DESC, Score DESC"
     }
 
@@ -234,14 +234,14 @@ func GetComments(w http.ResponseWriter, q map[string]string, b string, db *sql.D
     w.Write(res)
 }
 
-func GetContributorId(w http.ResponseWriter, q map[string]string, b string, db *sql.DB) {
+func GetContributorId(w http.ResponseWriter, q map[string][]string, b string, db *sql.DB) {
     query := `
         UPDATE TOP (1) Posts
         SET NextUserID = NextUserID + 1
         OUTPUT INSERTED.NextUserID
         WHERE ID = $1
        `
-    idrow, err := db.Query(query, q["postid"])
+    idrow, err := db.Query(query, q["postid"][0])
     if err != nil {
         http.Error(w, err.Error(), http.StatusInternalServerError)
         return
@@ -259,6 +259,6 @@ func GetContributorId(w http.ResponseWriter, q map[string]string, b string, db *
     w.Write([]byte(res))
 }
 
-func GetHealth(w http.ResponseWriter, q map[string]string, b string, db *sql.DB) {
+func GetHealth(w http.ResponseWriter, q map[string][]string, b string, db *sql.DB) {
     w.WriteHeader(http.StatusOK)
 }
