@@ -2,6 +2,7 @@ package server
 
 import (
     "fmt"
+    "math"
     "strconv"
     "net/http"
     "database/sql"
@@ -132,7 +133,7 @@ func GetPostsByRank(w http.ResponseWriter, q map[string][]string, b string, db *
     }()
 
     var firstRank int64 = 0
-    var lastRank int64
+    var lastRank int64 = math.MaxInt64
     var rankVersion int64 = -1
     var maxCount = defaultMaxPostsReturned
     if v, ok := q["firstrank"]; ok {
@@ -140,8 +141,6 @@ func GetPostsByRank(w http.ResponseWriter, q map[string][]string, b string, db *
     } 
     if v, ok := q["lastrank"]; ok {
         lastRank, err = strconv.ParseInt(v[0], 10, 64)
-    } else {
-        lastRank = firstRank + defaultMaxPostsReturned
     }
     if v, ok := q["rankversion"]; ok {
         rankVersion, err = strconv.ParseInt(v[0], 10, 64)
