@@ -231,9 +231,12 @@ func GetComments(w http.ResponseWriter, q map[string][]string, b string, db *sql
     }()
 
     parentPost := q["parentpost"][0]
-    parentComment := q["parentcomment"][0]
+    parentComment := ""
+    if v, ok := q["parentcomment"]; ok {
+        parentComment = v[0]
+    }
     ordering := "ORDER BY Score DESC, Time DESC"
-    if q["ordering"][0] == timeOrderingKeyword {
+    if v, ok := q["ordering"]; ok && v[0] == timeOrderingKeyword {
         ordering = "ORDER BY Time DESC, Score DESC"
     }
 
